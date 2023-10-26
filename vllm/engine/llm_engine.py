@@ -691,14 +691,23 @@ class LLMEngine:
     ) -> Any:
         """Runs the given method on all workers."""
         all_outputs = []
-        for worker in self.workers:
-            if self.parallel_config.worker_use_ray:
-                executor = partial(worker.execute_method.remote, method)
-            else:
-                executor = getattr(worker, method)
+        from torch.profiler import schedule, profile, ProfilerActivity
+        import os
+        for index, worker in enumerate(self.workers):      
+            if(method == "execute_model"):
+                with profile(
+                    activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                ) as p:
+                    if self.parallel_config.worker_use_ray:
+                        executor = partial(worker.execute_method.remote, method)
+                    else:
+                        executor = getattr(worker, method)
+                    output = executor(*args, **kwargs)
 
-            output = executor(*args, **kwargs)
-            all_outputs.append(output)
+                iteration = 0
+                while os.path.exists(f"/workspace/trace_worker{index}_iter{iteration}.json"):
+                    iteration += 1
+                p.export_chrome_trace(f"/workspace/trace_worker{index}_iter{iteration}.json")
 
         if self.parallel_config.worker_use_ray:
             all_outputs = ray.get(all_outputs)
